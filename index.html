@@ -102,6 +102,47 @@
       margin: 0 4px 18px;
     }
 
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+
+    .sound-toggle {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border: 1px solid var(--panel-border);
+      border-radius: 999px;
+      color: var(--text);
+      background: var(--panel);
+      font-size: .75rem;
+      font-weight: 750;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .sound-toggle input {
+      width: 18px;
+      height: 18px;
+      margin: 0;
+      accent-color: var(--accent-strong);
+      cursor: pointer;
+    }
+
+    .sound-toggle input:disabled {
+      cursor: not-allowed;
+    }
+
+    .sound-toggle input:focus-visible {
+      outline: 3px solid var(--orange);
+      outline-offset: 3px;
+    }
+
     .brand {
       display: flex;
       align-items: center;
@@ -558,7 +599,8 @@
 
     @media (max-width: 480px) {
       body { padding: 18px 12px; }
-      .topbar { margin-inline: 2px; }
+      .topbar { align-items: flex-start; flex-wrap: wrap; margin-inline: 2px; }
+      .topbar-actions { margin-left: auto; }
       .brand-mark { width: 40px; height: 40px; }
       .brand-subtitle { max-width: 190px; font-size: .7rem; }
       .mission-badge { padding: 7px 9px; font-size: .62rem; }
@@ -568,8 +610,7 @@
     }
 
     @media (max-width: 360px) {
-      .topbar { align-items: flex-start; flex-wrap: wrap; }
-      .mission-badge { margin-left: 51px; }
+      .topbar-actions { width: 100%; justify-content: flex-end; }
     }
 
     @media (max-height: 700px) and (min-width: 481px) {
@@ -596,7 +637,13 @@
           <p class="brand-subtitle">Mission Control: Young Astronaut Training</p>
         </div>
       </div>
-      <div class="mission-badge"><span class="status-dot" aria-hidden="true"></span>MISSION ACTIVE</div>
+      <div class="topbar-actions">
+        <label class="sound-toggle" for="sound-toggle">
+          <input id="sound-toggle" type="checkbox" aria-describedby="sound-status">
+          <span>Sound effects</span>
+        </label>
+        <div class="mission-badge"><span class="status-dot" aria-hidden="true"></span>MISSION ACTIVE</div>
+      </div>
     </header>
 
     <div class="card">
@@ -656,6 +703,7 @@
       </section>
     </div>
     <p class="sr-only" id="announcer" aria-live="polite" aria-atomic="true"></p>
+    <p class="sr-only" id="sound-status" role="status" aria-live="polite" aria-atomic="true"></p>
   </main>
 
   <script>
@@ -764,7 +812,65 @@
     const feedbackCopy = document.getElementById("feedback-copy");
     const nextRow = document.getElementById("next-row");
     const announcer = document.getElementById("announcer");
+    const soundToggle = document.getElementById("sound-toggle");
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let audioContext = null;
+
+    if (!window.AudioContext) {
+      soundToggle.disabled = true;
+      document.getElementById("sound-status").textContent =
+        "Sound effects are unavailable in this browser. The quiz works without sound.";
+    }
+
+    function playTone(frequency, startOffset, duration = 0.13) {
+      if (!soundToggle.checked || !audioContext || audioContext.state !== "running") return;
+
+      const startTime = audioContext.currentTime + startOffset;
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(frequency, startTime);
+      gain.gain.setValueAtTime(0.0001, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.045, startTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start(startTime);
+      oscillator.stop(startTime + duration + 0.01);
+    }
+
+    function playCue(kind) {
+      if (kind === "correct") {
+        playTone(660, 0);
+        playTone(880, 0.12);
+      } else if (kind === "incorrect") {
+        playTone(260, 0);
+      } else {
+        playTone(523, 0);
+        playTone(659, 0.14);
+        playTone(784, 0.28);
+      }
+    }
+
+    soundToggle.addEventListener("change", async () => {
+      const status = document.getElementById("sound-status");
+      if (!soundToggle.checked) {
+        status.textContent = "";
+        return;
+      }
+
+      try {
+        if (!audioContext) audioContext = new window.AudioContext();
+        await audioContext.resume();
+        if (audioContext.state !== "running") {
+          throw new Error("Audio context did not start.");
+        }
+        status.textContent = "Sound effects on.";
+      } catch {
+        soundToggle.checked = false;
+        status.textContent = "Sound could not be started. You can keep playing without it.";
+      }
+    });
 
     function showScreen(name) {
       Object.entries(screens).forEach(([key, screen]) => {
@@ -879,6 +985,7 @@
       announcer.textContent = isCorrect
         ? `Correct! ${question.explanation} Your score is ${state.score}.`
         : `Good try. The correct answer is ${question.answers[question.correct]}. ${question.explanation} Your score is ${state.score}.`;
+      playCue(isCorrect ? "correct" : "incorrect");
       button.blur();
       document.getElementById("next-button").focus();
     }
@@ -925,6 +1032,7 @@
       document.getElementById("result-meter-fill").style.width = `${state.score}%`;
       showScreen("results");
       celebrate();
+      playCue("complete");
       announcer.textContent =
         `Mission complete! You scored ${state.score} out of 100 points and got ${state.correctAnswers} out of 10 correct. ${result.message}`;
     }
